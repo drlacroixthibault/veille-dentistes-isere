@@ -18,6 +18,7 @@ Usage :
   python veille.py --date 2026-11-02
 """
 import argparse
+import math
 import csv
 import datetime as dt
 import gzip
@@ -33,6 +34,10 @@ import urllib.request
 SOURCE_URL = "https://www.data.gouv.fr/api/1/datasets/r/fffda7e9-0ea2-4c35-bba0-4496f3af935d"
 DEPARTEMENT = "38"
 CODE_PROFESSION = "40"  # chirurgien-dentiste
+# Zone suivie : tout l'Isère + tout cabinet à moins de RAYON_KM de Grenoble (Savoie, Drôme…)
+GRENOBLE = (45.1885, 5.7245)
+RAYON_KM = 50
+DEPS_VOISINS = {"73", "26"}  # départements géocodés pour trouver les cabinets à moins de 50 km
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SNAPSHOT = os.path.join(ROOT, "data", "photo_nationale.json.gz")
@@ -209,18 +214,42 @@ class Geocodeur:
                 self.cache[cle] = res
         if cle in self.cache:
             site["lat"], site["lon"], site["precision"] = self.cache[cle]
+            site["km"] = round(km_grenoble(site["lat"], site["lon"]), 1)
+
+    def depuis_cache(self, site):
+        """Positionne un site sans appel réseau (pour l'ancienne photo)."""
+        actif, self.actif = self.actif, False
+        self.placer(site)
+        self.actif = actif
 
     def enregistrer(self):
         ecrire_json(GEOCACHE, self.cache)
 
 
 # --------------------------------------------------------------- comparaison
-def en_isere(p):
-    return [s for s in p.get("sites", []) if s["dep"] == DEPARTEMENT]
+def km_grenoble(lat, lon):
+    la1, lo1, la2, lo2 = map(math.radians, (GRENOBLE[0], GRENOBLE[1], lat, lon))
+    h = math.sin((la2 - la1) / 2) ** 2 + math.cos(la1) * math.cos(la2) * math.sin((lo2 - lo1) / 2) ** 2
+    return 2 * 6371 * math.asin(math.sqrt(h))
+
+
+def dans_zone(s):
+    if s["dep"] == DEPARTEMENT:
+        return True
+    return s.get("km") is not None and s["km"] <= RAYON_KM
+
+
+def en_isere(p):  # « dans la zone suivie »
+    return [s for s in p.get("sites", []) if dans_zone(s)]
 
 
 def ailleurs(p):
-    return [s for s in p.get("sites", []) if s["dep"] != DEPARTEMENT]
+    return [s for s in p.get("sites", []) if not dans_zone(s)]
+
+
+def proche(sites):
+    km = [s["km"] for s in sites if s.get("km") is not None]
+    return round(min(km)) if km else None
 
 
 def lieux(sites):
@@ -235,7 +264,7 @@ def comparer(avant, apres, date):
         b38 = en_isere(b) if b else []
         p = b or a
         base = {"date": date, "rpps": rpps, "civ": p["civ"], "nom": p["nom"],
-                "prenom": p["prenom"], "sf": p["sf"]}
+                "prenom": p["prenom"], "sf": p["sf"], "km": proche(b38 or a38)}
 
         if b38 and not a38:
             if a is None:
@@ -304,6 +333,20 @@ def main():
         with gzip.open(SNAPSHOT, "rt", encoding="utf-8") as f:
             avant = json.load(f)["pros"]
 
+    # positions (Isère + départements voisins) avant la comparaison, pour le rayon de 50 km
+    print("Géocodage des cabinets…")
+    geo = Geocodeur(actif=not args.sans_geo)
+    for p in apres.values():
+        for s in p["sites"]:
+            if s["dep"] == DEPARTEMENT or s["dep"] in DEPS_VOISINS:
+                geo.placer(s)
+    for p in (avant or {}).values():
+        for s in p["sites"]:
+            if s["dep"] == DEPARTEMENT or s["dep"] in DEPS_VOISINS:
+                geo.depuis_cache(s)
+    geo.enregistrer()
+    print(f"{geo.appels} appel(s) de géocodage.")
+
     mouvements = lire_json(os.path.join(OUT_DIR, "mouvements.json"), [])
     nouveaux = comparer(avant, apres, args.date) if avant is not None else []
     if avant is not None and len(nouveaux) > 300:
@@ -316,7 +359,7 @@ def main():
         s38 = en_isere(p)
         if s38:
             isere.append({"rpps": rpps, "civ": p["civ"], "nom": p["nom"], "prenom": p["prenom"],
-                          "sf": p["sf"], "sites": s38, "autres": ailleurs(p)})
+                          "sf": p["sf"], "sites": s38, "autres": ailleurs(p), "km": proche(s38)})
     isere.sort(key=lambda x: (x["nom"], x["prenom"]))
 
     # date d'arrivée en Isère (pour la carte « température ») : dernière arrivée constatée
@@ -327,22 +370,11 @@ def main():
     for p in isere:
         p["arrivee"] = arrivees.get(p["rpps"])
 
-    print("Géocodage des cabinets…")
-    geo = Geocodeur(actif=not args.sans_geo)
-    for p in isere:
-        for s in p["sites"]:
-            geo.placer(s)
-    for e in mouvements:
-        if e["type"] == "depart":
-            for s in e["sites"]:
-                if "lat" not in s:
-                    geo.placer(s)
-    geo.enregistrer()
-    print(f"{geo.appels} adresse(s) géocodée(s) cette semaine.")
 
     meta = lire_json(os.path.join(OUT_DIR, "meta.json"), {})
     meta.setdefault("debut_suivi", args.date)
-    meta.update({"maj": args.date, "nb_isere": len(isere), "nb_france": len(apres)})
+    meta.update({"maj": args.date, "nb_isere": len(isere), "nb_france": len(apres),
+                 "rayon_km": RAYON_KM, "centre": GRENOBLE})
     meta.setdefault("historique", []).append(
         {"date": args.date, "isere": len(isere),
          "arrivees": sum(e["type"] == "arrivee" for e in nouveaux),
@@ -357,17 +389,31 @@ def main():
     with gzip.open(SNAPSHOT, "wt", encoding="utf-8") as f:
         json.dump({"date": args.date, "pros": apres}, f, ensure_ascii=False, separators=(",", ":"))
 
-    if os.path.exists(ALERTE):
-        os.remove(ALERTE)
+    for fic in (ALERTE, ALERTE + ".titre"):
+        if os.path.exists(fic):
+            os.remove(fic)
     if nouveaux:
         etiquette = {"arrivee": "🟢 Arrivée", "depart": "🔴 Départ", "mouvement": "🔵 Changement de lieu"}
-        lignes = [f"Semaine du {args.date} — {len(nouveaux)} mouvement(s) en Isère.\n"]
-        for e in nouveaux:
+        pres = [e for e in nouveaux if e["km"] is not None and e["km"] <= RAYON_KM]
+        loin = [e for e in nouveaux if e not in pres]
+
+        def ligne(e):
             sf = f" — {', '.join(e['sf'])}" if e["sf"] else ""
             ou = ", ".join(lieux(e["sites"]))
-            lignes.append(f"- **{etiquette[e['type']]}** : {e['civ']} {e['prenom']} {e['nom']}{sf} — {ou}. {e['detail']}")
+            km = f" (à {e['km']} km de Grenoble)" if e["km"] is not None else ""
+            return f"- **{etiquette[e['type']]}** : {e['civ']} {e['prenom']} {e['nom']}{sf} — {ou}{km}. {e['detail']}"
+
+        lignes = []
+        if pres:
+            lignes += [f"## ⭐ À moins de {RAYON_KM} km de Grenoble ({len(pres)})", ""] + [ligne(e) for e in pres] + [""]
+        if loin:
+            lignes += [f"## Reste de l'Isère ({len(loin)})", ""] + [ligne(e) for e in loin] + [""]
+        lignes += ["Voir la carte et le détail : https://drlacroixthibault.github.io/veille-dentistes-isere/"]
         with open(ALERTE, "w", encoding="utf-8") as f:
             f.write("\n".join(lignes) + "\n")
+        titre_alerte = (f"⭐ {len(pres)} près de Grenoble · " if pres else "") + f"{len(nouveaux)} mouvement(s) confrères"
+        with open(ALERTE + ".titre", "w", encoding="utf-8") as f:
+            f.write(titre_alerte)
 
     if avant is None:
         print(f"Premier passage : photo de référence enregistrée ({len(isere)} dentistes en Isère).")

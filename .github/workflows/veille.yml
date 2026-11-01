@@ -1,8 +1,8 @@
-name: Mise à jour hebdomadaire
+name: Mise à jour quotidienne
 
 on:
   schedule:
-    - cron: "23 5 * * 1"   # chaque lundi vers 6 h 20 (heure de Paris en hiver)
+    - cron: "23 5 * * *"   # chaque matin vers 6 h 20 (heure de Paris en hiver)
   workflow_dispatch:        # bouton « Run workflow » pour lancer à la main
 
 permissions:
@@ -52,6 +52,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh issue create \
-            --title "Confrères Isère : nouveaux mouvements ($(date +%d/%m/%Y))" \
+            --title "$(cat nouveaux_mouvements.md.titre) — $(date +%d/%m/%Y)" \
             --body-file nouveaux_mouvements.md \
             --assignee "${{ github.repository_owner }}"

@@ -1,0 +1,33 @@
+name: Fond de carte (routes et rivières)
+
+on:
+  schedule:
+    - cron: "41 3 1 * *"   # le 1er de chaque mois
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: veille
+  cancel-in-progress: false
+
+jobs:
+  fond:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Télécharger routes, rivières et communes (OpenStreetMap)
+        run: python fond_carte.py
+      - name: Enregistrer
+        run: |
+          git config user.name "veille-bot"
+          git config user.email "veille-bot@users.noreply.github.com"
+          git pull --rebase -q
+          git add docs/data/routes.json
+          git diff --cached --quiet || git commit -m "Fond de carte du $(date +%F)"
+          git push

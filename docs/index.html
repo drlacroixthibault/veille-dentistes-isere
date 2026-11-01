@@ -60,7 +60,7 @@ main{max-width:900px;margin:auto;padding:0 16px 48px}
 </head>
 <body>
 <header>
-  <h1>Confrères en Isère</h1>
+  <h1>Confrères · Isère &amp; Grenoble 50 km</h1>
   <div class="sub" id="sub">Chargement…</div>
 </header>
 <main>
@@ -74,8 +74,9 @@ main{max-width:900px;margin:auto;padding:0 16px 48px}
     <input id="q" type="search" placeholder="Nom, commune, code postal…">
     <select id="type"><option value="">Tous les mouvements</option><option value="arrivee">Arrivées</option><option value="depart">Départs</option><option value="mouvement">Changements de lieu</option></select>
     <select id="periode"><option value="30">30 derniers jours</option><option value="90">3 derniers mois</option><option value="365">12 derniers mois</option><option value="0" selected>Tout l'historique</option></select>
+    <select id="zone"><option value="">Toute la zone</option><option value="50">≤ 50 km de Grenoble</option><option value="20">≤ 20 km de Grenoble</option></select>
     <select id="sf"><option value="">Toutes pratiques</option></select>
-    <select id="tri" hidden><option value="nom">Tri : nom</option><option value="recent">Tri : inscription la plus récente (approx.)</option><option value="ville">Tri : commune</option></select>
+    <select id="tri" hidden><option value="nom">Tri : nom</option><option value="recent">Tri : inscription la plus récente (approx.)</option><option value="ville">Tri : commune</option><option value="km">Tri : distance de Grenoble</option></select>
   </div>
   <div class="compte" id="compte"></div>
   <div id="liste"></div>
@@ -91,7 +92,7 @@ main{max-width:900px;margin:auto;padding:0 16px 48px}
       </div>
     </div>
   </div>
-  <p class="note">Source : Annuaire Santé (ANS), données RPPS transmises par l'Ordre des chirurgiens-dentistes, Licence Ouverte 2.0. Mise à jour automatique chaque lundi. Positions : géocodage IGN Géoplateforme ; fond de carte © OpenStreetMap, © CARTO. Sur la carte, la couleur d'un confrère passe du rouge au bleu au fil de l'année qui suit son arrivée ; les départs restent visibles en noir trois mois, puis disparaissent. Un mouvement correspond à un changement constaté dans l'annuaire d'une semaine sur l'autre ; la provenance n'est connue que pour les confrères déjà présents dans une photo précédente. Le tri « inscription la plus récente » s'appuie sur le numéro RPPS, attribué par ordre chronologique : c'est une approximation.</p>
+  <p class="note">Source : Annuaire Santé (ANS), données RPPS transmises par l'Ordre des chirurgiens-dentistes, Licence Ouverte 2.0. Zone suivie : tout l'Isère, plus les cabinets à moins de 50 km de Grenoble (Savoie, Drôme). Mise à jour automatique chaque matin. Positions : géocodage IGN Géoplateforme ; fond de carte © IGN Plan IGN. Sur la carte, la couleur d'un confrère passe du rouge au bleu au fil de l'année qui suit son arrivée ; les départs restent visibles en noir trois mois, puis disparaissent. Un mouvement correspond à un changement constaté dans l'annuaire d'une semaine sur l'autre ; la provenance n'est connue que pour les confrères déjà présents dans une photo précédente. Le tri « inscription la plus récente » s'appuie sur le numéro RPPS, attribué par ordre chronologique : c'est une approximation.</p>
 </main>
 <script>
 const $=s=>document.querySelector(s);
@@ -106,26 +107,28 @@ function chips(sf){return sf&&sf.length?`<div class="chips">${sf.map(x=>`<span c
 function texte(o){return [o.nom,o.prenom,...(o.sites||[]).flatMap(s=>[s.ville,s.cp,s.cabinet,s.adr]),o.detail||""].join(" ").normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase()}
 function rendre(){
   const q=$("#q").value.normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase().trim();
-  const sf=$("#sf").value;
+  const sf=$("#sf").value,zr=+$("#zone").value;
+  window.ZR=zr;
   let html="",n=0;
   $("#liste").hidden=vue==="carte";$("#vue-carte").hidden=vue!=="carte";
   if(vue==="carte"){carte(q,sf);return;}
   if(vue==="mvt"){
     const t=$("#type").value,j=+$("#periode").value;
     const lim=j?new Date(Date.now()-j*864e5).toISOString().slice(0,10):"";
-    const l=MVT.filter(e=>(!t||e.type===t)&&(!lim||e.date>=lim)&&(!sf||(e.sf||[]).includes(sf))&&(!q||texte(e).includes(q)));
+    const l=MVT.filter(e=>(!zr||(e.km!=null&&e.km<=zr))&&(!t||e.type===t)&&(!lim||e.date>=lim)&&(!sf||(e.sf||[]).includes(sf))&&(!q||texte(e).includes(q)));
     n=l.length;
-    html=l.map(e=>`<div class="card"><div class="top"><span class="nom">${esc(civ(e.civ)+e.prenom+" "+e.nom)}</span><span class="badge ${e.type}">${LIB[e.type]}</span></div><div class="date">Constaté le ${fdate(e.date)}</div><div class="detail">${esc(e.detail)}</div>${sites(e.sites)}${chips(e.sf)}</div>`).join("");
+    html=l.map(e=>`<div class="card"><div class="top"><span class="nom">${esc(civ(e.civ)+e.prenom+" "+e.nom)}</span><span class="badge ${e.type}">${LIB[e.type]}</span></div><div class="date">Constaté le ${fdate(e.date)}${e.km!=null?` · ${e.km<=50?"⭐ ":""}${e.km} km de Grenoble`:""}</div><div class="detail">${esc(e.detail)}</div>${sites(e.sites)}${chips(e.sf)}</div>`).join("");
     if(!n) html=`<div class="vide">${MVT.length?"Aucun mouvement pour ces filtres.":"Aucun mouvement pour l'instant.<br>Le suivi a démarré le "+(META.debut_suivi?fdate(META.debut_suivi):"—")+" : les arrivées et départs apparaîtront ici dès la prochaine mise à jour hebdomadaire."}</div>`;
     $("#compte").textContent=n?`${n} mouvement${n>1?"s":""}`:"";
   }else{
     const tri=$("#tri").value;
-    let l=ISERE.filter(p=>(!sf||(p.sf||[]).includes(sf))&&(!q||texte(p).includes(q)));
+    let l=ISERE.filter(p=>(!zr||(p.km!=null&&p.km<=zr))&&(!sf||(p.sf||[]).includes(sf))&&(!q||texte(p).includes(q)));
     if(tri==="recent") l=[...l].sort((a,b)=>b.rpps.localeCompare(a.rpps));
+    if(tri==="km") l=[...l].sort((a,b)=>(a.km??999)-(b.km??999));
     if(tri==="ville") l=[...l].sort((a,b)=>(a.sites[0]?.ville||"").localeCompare(b.sites[0]?.ville||"","fr"));
     n=l.length;
     const vis=l.slice(0,300);
-    html=vis.map(p=>`<div class="card"><div class="top"><span class="nom">${esc(civ(p.civ)+p.prenom+" "+p.nom)}</span><span class="date">RPPS ${esc(p.rpps)}</span></div>${sites(p.sites)}${p.autres&&p.autres.length?`<div class="site">Exerce aussi hors Isère : ${esc(p.autres.map(s=>s.ville).join(", "))}</div>`:""}${chips(p.sf)}</div>`).join("")||`<div class="vide">Aucun confrère ne correspond.</div>`;
+    html=vis.map(p=>`<div class="card"><div class="top"><span class="nom">${esc(civ(p.civ)+p.prenom+" "+p.nom)}</span><span class="date">${p.km!=null?p.km+" km · ":""}RPPS ${esc(p.rpps)}</span></div>${sites(p.sites)}${p.autres&&p.autres.length?`<div class="site">Exerce aussi hors Isère : ${esc(p.autres.map(s=>s.ville).join(", "))}</div>`:""}${chips(p.sf)}</div>`).join("")||`<div class="vide">Aucun confrère ne correspond.</div>`;
     $("#compte").textContent=`${n} confrère${n>1?"s":""}${n>300?" — 300 premiers affichés, affinez la recherche":""}`;
   }
   $("#liste").innerHTML=html;
@@ -145,13 +148,14 @@ function carte(q,sf){
   if(!window.L){$("#carte").innerHTML='<div class="vide">Carte indisponible (pas de connexion).</div>';return}
   if(!MAP){
     MAP=L.map("carte",{zoomControl:true}).setView([45.25,5.6],9);
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",{maxZoom:19,attribution:'&copy; OpenStreetMap, &copy; CARTO'}).addTo(MAP);
+    L.tileLayer("https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&TILEMATRIXSET=PM&FORMAT=image/png&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}",{maxZoom:19,attribution:"&copy; IGN"}).addTo(MAP);
+    const c=META.centre||[45.1885,5.7245];L.circle(c,{radius:(META.rayon_km||50)*1000,color:"#1f6f6a",weight:1.5,dashArray:"6 6",fill:false,interactive:false}).addTo(MAP);
     COUCHE=L.layerGroup().addTo(MAP);
   }
   setTimeout(()=>MAP.invalidateSize(),50);
   COUCHE.clearLayers();
   const anciens=$("#voir-anciens").checked,departs=$("#voir-departs").checked,pts=[];
-  const ok=o=>(!sf||(o.sf||[]).includes(sf))&&(!q||texte(o).includes(q));
+  const ok=o=>(!window.ZR||(o.km!=null&&o.km<=window.ZR))&&(!sf||(o.sf||[]).includes(sf))&&(!q||texte(o).includes(q));
   ISERE.filter(ok).forEach(p=>p.sites.forEach(s=>{if(s.lat==null)return;
     const j=age(p.arrivee);if(j==null&&!anciens)return;pts.push({lat:s.lat,lon:s.lon,p,s,j,k:"actif"})}));
   if(departs){const lim=new Date(Date.now()-90*JOUR).toISOString().slice(0,10);
@@ -179,7 +183,7 @@ function stats(){
   const d=new Date(Date.now()-90*864e5).toISOString().slice(0,10);
   const r=MVT.filter(e=>e.date>=d);
   const c=t=>r.filter(e=>e.type===t).length;
-  $("#stats").innerHTML=[[META.nb_isere??ISERE.length,"dentistes en Isère"],[c("arrivee"),"arrivées (3 mois)"],[c("depart"),"départs (3 mois)"],[c("mouvement"),"changements (3 mois)"]].map(([v,l])=>`<div class="stat"><b>${v}</b><span>${l}</span></div>`).join("");
+  $("#stats").innerHTML=[[META.nb_isere??ISERE.length,"confrères suivis"],[c("arrivee"),"arrivées (3 mois)"],[c("depart"),"départs (3 mois)"],[c("mouvement"),"changements (3 mois)"]].map(([v,l])=>`<div class="stat"><b>${v}</b><span>${l}</span></div>`).join("");
   $("#sub").textContent=META.maj?`Mise à jour du ${fdate(META.maj)} · suivi depuis le ${fdate(META.debut_suivi)}`:"";
   const s=new Set();[...ISERE,...MVT].forEach(p=>(p.sf||[]).forEach(x=>s.add(x)));
   [...s].sort().forEach(x=>$("#sf").insertAdjacentHTML("beforeend",`<option>${esc(x)}</option>`));
@@ -188,7 +192,7 @@ document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{
   document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("on",x===b));
   vue=b.dataset.v;$("#type").hidden=$("#periode").hidden=vue!=="mvt";$("#tri").hidden=vue!=="annuaire";rendre();
 });
-["q","type","periode","sf","tri","voir-anciens","voir-departs"].forEach(id=>$("#"+id).addEventListener("input",rendre));
+["q","type","periode","zone","sf","tri","voir-anciens","voir-departs"].forEach(id=>$("#"+id).addEventListener("input",rendre));
 Promise.all(["isere","mouvements","meta"].map(f=>fetch(`data/${f}.json?v=${Date.now()}`).then(r=>r.ok?r.json():null).catch(()=>null)))
 .then(([i,m,me])=>{ISERE=i||[];MVT=m||[];META=me||{};
   if(!me){$("#sub").textContent="Données pas encore générées : lancez la première mise à jour (onglet Actions de GitHub).";}
